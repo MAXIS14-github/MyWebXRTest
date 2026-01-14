@@ -2,14 +2,14 @@
 <html lang="pl">
 <head>
     <meta charset="utf-8">
-    <title>Ulepszone WebXR AR 2026</title>
+    <title>WebXR Fix Black Screen</title>
     <meta name="viewport" content="width=device-width, initial-scale=1.0, user-scalable=no">
     <style>
-        body { margin: 0; overflow: hidden; background-color: #333; }
+        body { margin: 0; overflow: hidden; background-color: #000; }
         #info {
-            position: absolute; top: 10px; width: 100%;
+            position: absolute; top: 20px; width: 100%;
             text-align: center; color: white; font-family: sans-serif;
-            z-index: 1; pointer-events: none; text-shadow: 1px 1px 2px black;
+            background: rgba(0,0,0,0.5); padding: 10px; z-index: 10;
         }
     </style>
     
@@ -23,66 +23,89 @@
     </script>
 </head>
 <body>
-    <div id="info">Skieruj telefon na podłogę i dotknij ekranu, aby posadzić kwiatka.</div>
+    <div id="info">
+        1. Jeśli widzisz to na telefonie - jest OK.<br>
+        2. Kliknij "START AR".<br>
+        3. Powinieneś zobaczyć kamerę i lewitującą kostkę.
+    </div>
 
     <script type="module">
         import * as THREE from 'three';
         import { ARButton } from 'three/addons/webxr/ARButton.js';
         import { GLTFLoader } from 'three/addons/loaders/GLTFLoader.js';
 
-        let container;
         let camera, scene, renderer;
         let controller;
-
-        let reticle; // Celownik
-        let hitTestSource = null;
-        let hitTestSourceRequested = false;
-
-        let flowerModel = null; // Zmienna na model kwiatka
+        let reticle;
+        let flowerModel;
+        let debugCube; // Dodatkowa kostka do testu
 
         init();
         animate();
 
         function init() {
-            container = document.createElement('div');
+            const container = document.createElement('div');
             document.body.appendChild(container);
 
             scene = new THREE.Scene();
+            // KLUCZOWA POPRAWKA: Upewnij się, że tło sceny jest puste (null), 
+            // aby kamera mogła prześwitywać.
+            scene.background = null; 
 
-            // 1. Kamera
             camera = new THREE.PerspectiveCamera(70, window.innerWidth / window.innerHeight, 0.01, 20);
 
-            // 2. Oświetlenie
+            // Światło
             const light = new THREE.HemisphereLight(0xffffff, 0xbbbbff, 3);
             light.position.set(0.5, 1, 0.25);
             scene.add(light);
 
-            // 3. Renderer
+            // Renderer z przezroczystością (alpha: true)
             renderer = new THREE.WebGLRenderer({ antialias: true, alpha: true });
             renderer.setPixelRatio(window.devicePixelRatio);
             renderer.setSize(window.innerWidth, window.innerHeight);
-            renderer.xr.enabled = true; // Włączenie obsługi XR
+            
+            // KLUCZOWA POPRAWKA: Wymuś czyszczenie koloru na przezroczysty
+            renderer.setClearColor(0x000000, 0); 
+            
+            renderer.xr.enabled = true;
             container.appendChild(renderer.domElement);
 
-            // 4. Przycisk AR (Automatyczna obsługa sesji)
-            document.body.appendChild(ARButton.createButton(renderer, { requiredFeatures: ['hit-test'] }));
-
-            // 5. Ładowanie modelu Słonecznika
-            const loader = new GLTFLoader();
-            loader.load("https://immersive-web.github.io/webxr-samples/media/gltf/sunflower/sunflower.gltf", function (gltf) {
-                flowerModel = gltf.scene;
+            // Przycisk AR
+            // 'domOverlay' pozwala widzieć elementy HTML (np. napisy) na wierzchu kamery
+            const button = ARButton.createButton(renderer, { 
+                requiredFeatures: ['hit-test'],
+                optionalFeatures: ['dom-overlay'],
+                domOverlay: { root: document.body } 
             });
+            document.body.appendChild(button);
 
-            // 6. Celownik (Reticle) - kółko wskazujące gdzie postawimy obiekt
+            // --- DODATEK DIAGNOSTYCZNY: Czerwona kostka ---
+            // Unosi się 1 metr przed Tobą. Jeśli ją widzisz, Three.js działa.
+            const geometry = new THREE.BoxGeometry(0.1, 0.1, 0.1);
+            const material = new THREE.MeshBasicMaterial({ color: 0xff0000 });
+            debugCube = new THREE.Mesh(geometry, material);
+            debugCube.position.set(0, 0, -0.5); // 50cm przed kamerą
+            scene.add(debugCube);
+            // ----------------------------------------------
+
+            // Celownik (Reticle)
             reticle = new THREE.Mesh(
                 new THREE.RingGeometry(0.15, 0.2, 32).rotateX(-Math.PI / 2),
-                new THREE.MeshBasicMaterial()
+                new THREE.MeshBasicMaterial({ color: 0xffffff })
             );
             reticle.matrixAutoUpdate = false;
             reticle.visible = false;
             scene.add(reticle);
 
-            // 7. Obsługa dotyku (Controller)
+            // Ładowanie modelu
+            const loader = new GLTFLoader();
+            loader.load("https://immersive-web.github.io/webxr-samples/media/gltf/sunflower/sunflower.gltf", 
+                (gltf) => { flowerModel = gltf.scene; },
+                undefined,
+                (error) => { console.error("Błąd ładowania modelu:", error); }
+            );
+
+            // Obsługa dotyku
             controller = renderer.xr.getController(0);
             controller.addEventListener('select', onSelect);
             scene.add(controller);
@@ -90,14 +113,11 @@
             window.addEventListener('resize', onWindowResize);
         }
 
-        // Funkcja stawiania kwiatka
         function onSelect() {
             if (reticle.visible && flowerModel) {
                 const newFlower = flowerModel.clone();
-                // Ustaw pozycję tam gdzie jest celownik
                 reticle.matrix.decompose(newFlower.position, newFlower.quaternion, newFlower.scale);
-                // Losowa rotacja wokół własnej osi dla naturalności
-                newFlower.rotation.y = Math.random() * Math.PI * 2; 
+                newFlower.rotation.y = Math.random() * Math.PI * 2;
                 scene.add(newFlower);
             }
         }
@@ -108,38 +128,39 @@
             renderer.setSize(window.innerWidth, window.innerHeight);
         }
 
-        // Główna pętla
         function animate() {
             renderer.setAnimationLoop(render);
         }
 
         function render(timestamp, frame) {
+            // Obracanie kostki diagnostycznej (żebyś wiedział, że aplikacja nie zamarzła)
+            if(debugCube) {
+                debugCube.rotation.x += 0.01;
+                debugCube.rotation.y += 0.01;
+            }
+
             if (frame) {
-                // Logika Hit-Test (wykrywanie powierzchni)
                 const referenceSpace = renderer.xr.getReferenceSpace();
                 const session = renderer.xr.getSession();
 
-                if (hitTestSourceRequested === false) {
-                    session.requestReferenceSpace('viewer').then(function (referenceSpace) {
-                        session.requestHitTestSource({ space: referenceSpace }).then(function (source) {
-                            hitTestSource = source;
+                // Logika hit-test
+                if (!window.hitTestSourceRequested) {
+                    session.requestReferenceSpace('viewer').then((refSpace) => {
+                        session.requestHitTestSource({ space: refSpace }).then((source) => {
+                            window.hitTestSource = source;
                         });
                     });
-
-                    session.addEventListener('end', function () {
-                        hitTestSourceRequested = false;
-                        hitTestSource = null;
+                    session.addEventListener('end', () => { 
+                        window.hitTestSourceRequested = false; 
+                        window.hitTestSource = null; 
                     });
-
-                    hitTestSourceRequested = true;
+                    window.hitTestSourceRequested = true;
                 }
 
-                if (hitTestSource) {
-                    const hitTestResults = frame.getHitTestResults(hitTestSource);
-
+                if (window.hitTestSource) {
+                    const hitTestResults = frame.getHitTestResults(window.hitTestSource);
                     if (hitTestResults.length > 0) {
                         const hit = hitTestResults[0];
-                        // Ustawienie celownika na wykrytej powierzchni
                         reticle.visible = true;
                         reticle.matrix.fromArray(hit.getPose(referenceSpace).transform.matrix);
                     } else {
@@ -147,7 +168,6 @@
                     }
                 }
             }
-
             renderer.render(scene, camera);
         }
     </script>
