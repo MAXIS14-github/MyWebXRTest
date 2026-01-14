@@ -2,14 +2,43 @@
 <html lang="pl">
 <head>
     <meta charset="utf-8">
-    <title>WebXR Fix Black Screen</title>
+    <title>WebXR Wybór Modeli</title>
     <meta name="viewport" content="width=device-width, initial-scale=1.0, user-scalable=no">
     <style>
-        body { margin: 0; overflow: hidden; background-color: #000; }
+        body { margin: 0; overflow: hidden; background-color: #000; font-family: sans-serif; }
+        
+        /* Styl panelu sterowania */
+        #ui-container {
+            position: absolute; 
+            bottom: 30px; 
+            left: 50%; 
+            transform: translateX(-50%); 
+            width: 300px;
+            display: flex; 
+            justify-content: space-between; 
+            align-items: center;
+            background: rgba(255, 255, 255, 0.8);
+            padding: 10px;
+            border-radius: 20px;
+            z-index: 100; /* Musi być na wierzchu */
+            display: none; /* Ukryty dopóki AR nie ruszy */
+        }
+
+        button.nav-btn {
+            background: #333; color: white; border: none;
+            width: 40px; height: 40px; border-radius: 50%;
+            font-size: 20px; cursor: pointer;
+        }
+
+        #model-name {
+            font-weight: bold; color: #333; text-align: center;
+            flex-grow: 1; margin: 0 10px;
+        }
+
         #info {
-            position: absolute; top: 20px; width: 100%;
-            text-align: center; color: white; font-family: sans-serif;
-            background: rgba(0,0,0,0.5); padding: 10px; z-index: 10;
+            position: absolute; top: 10px; width: 100%; text-align: center;
+            color: white; text-shadow: 1px 1px 2px black; pointer-events: none;
+            z-index: 10;
         }
     </style>
     
@@ -23,10 +52,12 @@
     </script>
 </head>
 <body>
-    <div id="info">
-        1. Jeśli widzisz to na telefonie - jest OK.<br>
-        2. Kliknij "START AR".<br>
-        3. Powinieneś zobaczyć kamerę i lewitującą kostkę.
+    <div id="info">Wybierz model na dole i dotknij ekranu, aby postawić.</div>
+
+    <div id="ui-container">
+        <button class="nav-btn" id="btn-prev">&lt;</button>
+        <span id="model-name">Ładowanie...</span>
+        <button class="nav-btn" id="btn-next">&gt;</button>
     </div>
 
     <script type="module">
@@ -34,11 +65,30 @@
         import { ARButton } from 'three/addons/webxr/ARButton.js';
         import { GLTFLoader } from 'three/addons/loaders/GLTFLoader.js';
 
+        // ==========================================
+        // 1. LISTA MODELI DO POSTAWIENIA
+        // ==========================================
+        const MODELS = [
+            "https://immersive-web.github.io/webxr-samples/media/gltf/sunflower/sunflower.gltf",
+            "https://immersive-web.github.io/webxr-samples/media/gltf/space-shuttle.gltf",
+            // Ten model jest trochę większy (fotel):
+            "https://raw.githubusercontent.com/KhronosGroup/glTF-Sample-Models/master/2.0/SheenChair/glTF/SheenChair.gltf" 
+        ];
+
+        let currentModelIndex = 0;
+        let loadedTemplates = {}; // Cache dla załadowanych modeli
+        let currentTemplate = null; // Aktualnie wybrany model gotowy do klonowania
+
         let camera, scene, renderer;
-        let controller;
-        let reticle;
-        let flowerModel;
-        let debugCube; // Dodatkowa kostka do testu
+        let controller, reticle;
+        let hitTestSource = null;
+        let hitTestSourceRequested = false;
+
+        // Elementy UI
+        const uiContainer = document.getElementById('ui-container');
+        const nameLabel = document.getElementById('model-name');
+        const btnPrev = document.getElementById('btn-prev');
+        const btnNext = document.getElementById('btn-next');
 
         init();
         animate();
@@ -48,45 +98,39 @@
             document.body.appendChild(container);
 
             scene = new THREE.Scene();
-            // KLUCZOWA POPRAWKA: Upewnij się, że tło sceny jest puste (null), 
-            // aby kamera mogła prześwitywać.
-            scene.background = null; 
+            scene.background = null; // Przezroczystość dla kamery
 
             camera = new THREE.PerspectiveCamera(70, window.innerWidth / window.innerHeight, 0.01, 20);
 
-            // Światło
+            // Oświetlenie (ważne dla modeli 3D)
             const light = new THREE.HemisphereLight(0xffffff, 0xbbbbff, 3);
             light.position.set(0.5, 1, 0.25);
             scene.add(light);
+            const dirLight = new THREE.DirectionalLight(0xffffff, 1.5); // Dodatkowe światło kierunkowe
+            dirLight.position.set(0, 10, 0);
+            scene.add(dirLight);
 
-            // Renderer z przezroczystością (alpha: true)
             renderer = new THREE.WebGLRenderer({ antialias: true, alpha: true });
             renderer.setPixelRatio(window.devicePixelRatio);
             renderer.setSize(window.innerWidth, window.innerHeight);
-            
-            // KLUCZOWA POPRAWKA: Wymuś czyszczenie koloru na przezroczysty
             renderer.setClearColor(0x000000, 0); 
-            
             renderer.xr.enabled = true;
             container.appendChild(renderer.domElement);
 
-            // Przycisk AR
-            // 'domOverlay' pozwala widzieć elementy HTML (np. napisy) na wierzchu kamery
-            const button = ARButton.createButton(renderer, { 
+            // ==========================================
+            // KONFIGURACJA AR BUTTON Z DOM OVERLAY
+            // ==========================================
+            // Pozwala widzieć HTML (uiContainer) na wierzchu kamery
+            const arButton = ARButton.createButton(renderer, { 
                 requiredFeatures: ['hit-test'],
                 optionalFeatures: ['dom-overlay'],
                 domOverlay: { root: document.body } 
             });
-            document.body.appendChild(button);
-
-            // --- DODATEK DIAGNOSTYCZNY: Czerwona kostka ---
-            // Unosi się 1 metr przed Tobą. Jeśli ją widzisz, Three.js działa.
-            const geometry = new THREE.BoxGeometry(0.1, 0.1, 0.1);
-            const material = new THREE.MeshBasicMaterial({ color: 0xff0000 });
-            debugCube = new THREE.Mesh(geometry, material);
-            debugCube.position.set(0, 0, -0.5); // 50cm przed kamerą
-            scene.add(debugCube);
-            // ----------------------------------------------
+            arButton.addEventListener('click', () => {
+                // Pokaż panel sterowania po wejściu w AR
+                uiContainer.style.display = 'flex';
+            });
+            document.body.appendChild(arButton);
 
             // Celownik (Reticle)
             reticle = new THREE.Mesh(
@@ -97,28 +141,95 @@
             reticle.visible = false;
             scene.add(reticle);
 
-            // Ładowanie modelu
-            const loader = new GLTFLoader();
-            loader.load("https://immersive-web.github.io/webxr-samples/media/gltf/sunflower/sunflower.gltf", 
-                (gltf) => { flowerModel = gltf.scene; },
-                undefined,
-                (error) => { console.error("Błąd ładowania modelu:", error); }
-            );
-
-            // Obsługa dotyku
+            // Kontroler dotyku
             controller = renderer.xr.getController(0);
             controller.addEventListener('select', onSelect);
             scene.add(controller);
 
+            // Obsługa przycisków UI
+            btnPrev.addEventListener('click', (e) => { 
+                e.stopPropagation(); // Zapobiegaj stawianiu modelu przy kliknięciu przycisku
+                changeModel(-1); 
+            });
+            btnNext.addEventListener('click', (e) => { 
+                e.stopPropagation(); 
+                changeModel(1); 
+            });
+
+            // Załaduj pierwszy model na start
+            loadModel(0);
+
             window.addEventListener('resize', onWindowResize);
         }
 
+        // ==========================================
+        // LOGIKA ZMIANY I ŁADOWANIA MODELI
+        // ==========================================
+        
+        function getFileName(url) {
+            // Wyciąga nazwę z URL: "folder/kwiatek.gltf" -> "kwiatek"
+            const parts = url.split('/');
+            const fileWithExt = parts[parts.length - 1];
+            return fileWithExt.split('.')[0].toUpperCase(); // Usuwa rozszerzenie i powiększa
+        }
+
+        function changeModel(direction) {
+            currentModelIndex += direction;
+            
+            // Pętla (jeśli koniec, wróć do początku)
+            if (currentModelIndex < 0) currentModelIndex = MODELS.length - 1;
+            if (currentModelIndex >= MODELS.length) currentModelIndex = 0;
+
+            loadModel(currentModelIndex);
+        }
+
+        function loadModel(index) {
+            const url = MODELS[index];
+            const name = getFileName(url);
+            nameLabel.innerText = "Ładowanie...";
+
+            // Sprawdź czy już załadowaliśmy ten model wcześniej (cache)
+            if (loadedTemplates[url]) {
+                currentTemplate = loadedTemplates[url];
+                nameLabel.innerText = name;
+                return;
+            }
+
+            // Jeśli nie, pobierz z sieci
+            const loader = new GLTFLoader();
+            loader.load(
+                url, 
+                (gltf) => {
+                    let model = gltf.scene;
+                    
+                    // Normalizacja skali (niektóre modele są gigantyczne)
+                    // Dla uproszczenia, skalujemy wszystko do sensownych rozmiarów AR
+                    const box = new THREE.Box3().setFromObject(model);
+                    const size = box.getSize(new THREE.Vector3()).length();
+                    const scaleFactor = 0.5 / size; // Celujemy w ~50cm wielkości
+                    model.scale.setScalar(scaleFactor);
+
+                    loadedTemplates[url] = model;
+                    currentTemplate = model;
+                    nameLabel.innerText = name;
+                },
+                undefined,
+                (err) => {
+                    console.error(err);
+                    nameLabel.innerText = "Błąd!";
+                }
+            );
+        }
+
         function onSelect() {
-            if (reticle.visible && flowerModel) {
-                const newFlower = flowerModel.clone();
-                reticle.matrix.decompose(newFlower.position, newFlower.quaternion, newFlower.scale);
-                newFlower.rotation.y = Math.random() * Math.PI * 2;
-                scene.add(newFlower);
+            if (reticle.visible && currentTemplate) {
+                const newObject = currentTemplate.clone();
+                reticle.matrix.decompose(newObject.position, newObject.quaternion, newObject.scale);
+                
+                // Zachowaj skalę modelu bazowego, ale pozwól na rotację
+                newObject.rotation.y = Math.random() * Math.PI * 2;
+                
+                scene.add(newObject);
             }
         }
 
@@ -133,32 +244,26 @@
         }
 
         function render(timestamp, frame) {
-            // Obracanie kostki diagnostycznej (żebyś wiedział, że aplikacja nie zamarzła)
-            if(debugCube) {
-                debugCube.rotation.x += 0.01;
-                debugCube.rotation.y += 0.01;
-            }
-
             if (frame) {
                 const referenceSpace = renderer.xr.getReferenceSpace();
                 const session = renderer.xr.getSession();
 
-                // Logika hit-test
-                if (!window.hitTestSourceRequested) {
+                if (!hitTestSourceRequested) {
                     session.requestReferenceSpace('viewer').then((refSpace) => {
                         session.requestHitTestSource({ space: refSpace }).then((source) => {
-                            window.hitTestSource = source;
+                            hitTestSource = source;
                         });
                     });
                     session.addEventListener('end', () => { 
-                        window.hitTestSourceRequested = false; 
-                        window.hitTestSource = null; 
+                        hitTestSourceRequested = false; 
+                        hitTestSource = null; 
+                        uiContainer.style.display = 'none'; // Ukryj UI po wyjściu z AR
                     });
-                    window.hitTestSourceRequested = true;
+                    hitTestSourceRequested = true;
                 }
 
-                if (window.hitTestSource) {
-                    const hitTestResults = frame.getHitTestResults(window.hitTestSource);
+                if (hitTestSource) {
+                    const hitTestResults = frame.getHitTestResults(hitTestSource);
                     if (hitTestResults.length > 0) {
                         const hit = hitTestResults[0];
                         reticle.visible = true;
