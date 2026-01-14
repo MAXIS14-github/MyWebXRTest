@@ -1,30 +1,34 @@
 <!doctype html>
 <html>
 <head>
-    <meta charset="UTF-8">
-    <meta name="viewport" content="width=device-width, user-scalable=no, initial-scale=1.0, maximum-scale=1.0, minimum-scale=1.0">
-    <title>Hello WebXR!</title>
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Hello WebXR 2026</title>
     <!-- three.js -->
     <script src="https://unpkg.com/three@0.126.0/build/three.js"></script>
-    <script src="https://unpkg.com/three@0.126.0/examples/js/loaders/GLTFLoader.js"></script>
+    <script src="unpkg.com"></script>
 </head>
-<body>
-    <!-- Starting an immersive WebXR session requires user interaction. We start this one with a simple button. -->
-    <button onclick="activateXR()">Start Hello WebXR</button>
+<body style="margin: 0; overflow: hidden;">
+    <button id="xr-button" onclick="activateXR()" style="position: absolute; left: 50%; top: 50%; transform: translate(-50%, -50%); padding: 12px 24px; z-index: 10;">Start Hello WebXR</button>
+
     <script>
         async function activateXR() {
-            // Add a canvas element and initialize a WebGL context that is compatible with WebXR.
+            // Remove button after interaction
+            document.getElementById('xr-button').remove();
+
+            // Initialize WebGL context
             const canvas = document.createElement("canvas");
             document.body.appendChild(canvas);
-            const gl = canvas.getContext("webgl", {xrCompatible: true});
+            const gl = canvas.getContext("webgl", { xrCompatible: true });
 
-            // Usuń kostkę demonstracyjną i zastąp ją sceną z oświetleniem.
             const scene = new THREE.Scene();
-            const directionalLight = new THREE.DirectionalLight(0xffffff, 0.3);
+
+            // Lighting setup
+            const directionalLight = new THREE.DirectionalLight(0xffffff, 1.0);
             directionalLight.position.set(10, 15, 10);
             scene.add(directionalLight);
+            scene.add(new THREE.AmbientLight(0x404040));
 
-            // Set up the WebGLRenderer, which handles rendering to the session's base layer.
             const renderer = new THREE.WebGLRenderer({
                 alpha: true,
                 preserveDrawingBuffer: true,
@@ -33,109 +37,73 @@
             });
             renderer.autoClear = false;
 
-            // The API directly updates the camera matrices.
-            // Disable matrix auto updates so three.js doesn't attempt
-            // to handle the matrices independently.
             const camera = new THREE.PerspectiveCamera();
             camera.matrixAutoUpdate = false;
 
-            // Initialize a WebXR session using "immersive-ar" with hit-test feature.
-            // Dodano 'dom-overlay' i 'local-floor' jako wymagane funkcje dla lepszej interakcji,
-            // choć samouczek wspomina tylko o 'hit-test'.
+            // Request XR Session with hit-test feature
             const session = await navigator.xr.requestSession("immersive-ar", {
-                requiredFeatures: ['hit-test', 'dom-overlay'], // 'dom-overlay' jest potrzebne, jeśli chcesz używać elementów DOM nałożonych na AR
-                optionalFeatures: ['local-floor', 'bounded-floor'], // Opcjonalne funkcje dla lepszego śledzenia podłogi
-                domOverlay: { root: document.body } // Wymagane dla 'dom-overlay'
+                requiredFeatures: ['hit-test', 'local-floor']
             });
-            session.updateRenderState({
-                baseLayer: new XRWebGLLayer(session, gl)
-            });
+            session.updateRenderState({ baseLayer: new XRWebGLLayer(session, gl) });
 
-            // A 'local' reference space has a native origin that is located
-            // near the viewer's position at the time the session was created.
-            // Zmieniono na 'viewer' dla hit-test, aby promień wychodził z punktu widzenia użytkownika.
-            const referenceSpace = await session.requestReferenceSpace('viewer');
-            // Dodatkowy referenceSpace dla umieszczania obiektów, np. 'local-floor'
-            const hitTestSourceReferenceSpace = await session.requestReferenceSpace('local-floor');
+            const referenceSpace = await session.requestReferenceSpace('local-floor');
+            const viewerSpace = await session.requestReferenceSpace('viewer');
+            const hitTestSource = await session.requestHitTestSource({ space: viewerSpace });
 
-
-            // Wczytywanie modeli GLTF
+            // Load Reticle (the ring used for targeting surfaces)
             const loader = new THREE.GLTFLoader();
             let reticle;
-            loader.load("https://immersive-web.github.io/webxr-samples/media/gltf/reticle/reticle.gltf", function(gltf) {
+            loader.load("immersive-web.github.io", (gltf) => {
                 reticle = gltf.scene;
-                reticle.visible = false; // Na początku niewidoczny
+                reticle.visible = false;
                 scene.add(reticle);
             });
+
+            // Load Model to place (Sunflower)
             let flower;
-            loader.load("https://immersive-web.github.io/webxr-samples/media/gltf/sunflower/sunflower.gltf", function(gltf) {
+            loader.load("immersive-web.github.io", (gltf) => {
                 flower = gltf.scene;
-                // Skalowanie słonecznika, jeśli jest zbyt duży
-                flower.scale.set(0.1, 0.1, 0.1); // Przykład skalowania
             });
 
-            // Zmienne do obsługi hit-test
-            let hitTestSource = null;
-            let hitTestSourceInitialized = false;
-
-            // Funkcja do inicjalizacji hit-test source
-            async function initializeHitTestSource() {
-                if (!hitTestSourceInitialized) {
-                    // Utwórz źródło testu trafień z promieniem wychodzącym z punktu widzenia użytkownika
-                    hitTestSource = await session.requestHitTestSource({ space: referenceSpace });
-                    hitTestSourceInitialized = true;
-                }
-            }
-
-            // Obsługa umieszczania słonecznika po dotknięciu ekranu
-            session.addEventListener('select', (event) => {
-                if (reticle.visible && flower) {
-                    const newFlower = flower.clone(); // Klonuj model słonecznika
-                    newFlower.position.setFromMatrixPosition(reticle.matrix); // Ustaw pozycję na pozycję siatki celowniczej
+            // Tap interaction: Place flower at reticle position
+            session.addEventListener("select", () => {
+                if (reticle && reticle.visible && flower) {
+                    const newFlower = flower.clone();
+                    newFlower.position.copy(reticle.position);
                     scene.add(newFlower);
                 }
             });
 
-            // Create a render loop that allows us to draw on the AR view.
+            // Animation loop
             const onXRFrame = (time, frame) => {
-                // Queue up the next draw request.
                 session.requestAnimationFrame(onXRFrame);
 
-                // Bind the graphics framebuffer to the baseLayer's framebuffer
                 gl.bindFramebuffer(gl.FRAMEBUFFER, session.renderState.baseLayer.framebuffer);
 
-                // Retrieve the pose of the device.
                 const pose = frame.getViewerPose(referenceSpace);
-
                 if (pose) {
                     const view = pose.views[0];
                     const viewport = session.renderState.baseLayer.getViewport(view);
                     renderer.setSize(viewport.width, viewport.height);
 
-                    camera.matrix.fromArray(view.transform.matrix);
                     camera.projectionMatrix.fromArray(view.projectionMatrix);
+                    camera.viewMatrix.fromArray(view.transform.inverse.matrix);
                     camera.updateMatrixWorld(true);
 
-                    // Wykonaj test trafień
-                    if (hitTestSource) {
-                        const hitTestResults = frame.getHitTestResults(hitTestSource);
-                        if (hitTestResults.length > 0) {
-                            const hit = hitTestResults[0];
-                            const pose = hit.getPose(hitTestSourceReferenceSpace); // Użyj hitTestSourceReferenceSpace
-                            reticle.visible = true;
-                            reticle.matrix.fromArray(pose.transform.matrix);
-                        } else {
-                            reticle.visible = false;
-                        }
+                    // Perform hit-test
+                    const hitTestResults = frame.getHitTestResults(hitTestSource);
+                    if (hitTestResults.length > 0 && reticle) {
+                        const hit = hitTestResults[0];
+                        const pose = hit.getPose(referenceSpace);
+                        reticle.visible = true;
+                        reticle.position.setFromMatrixPosition(new THREE.Matrix4().fromArray(pose.transform.matrix));
+                    } else if (reticle) {
+                        reticle.visible = false;
                     }
 
-                    // Render the scene with THREE.WebGLRenderer.
                     renderer.render(scene, camera);
                 }
             };
-
-            // Inicjalizuj hit test source po rozpoczęciu sesji
-            initializeHitTestSource();
             session.requestAnimationFrame(onXRFrame);
         }
     </script>
