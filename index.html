@@ -2,7 +2,7 @@
 <html lang="pl">
 <head>
     <meta charset="utf-8">
-    <title>WebXR AR 2026 - Fixed GUI</title>
+    <title>WebXR AR - Fix Controls</title>
     <meta name="viewport" content="width=device-width, initial-scale=1.0, user-scalable=no">
     <style>
         body { margin: 0; overflow: hidden; background-color: #000; font-family: sans-serif; }
@@ -10,7 +10,7 @@
         #overlay {
             position: absolute;
             top: 0; left: 0; width: 100%; height: 100%;
-            pointer-events: none;
+            pointer-events: none; /* Pozwala na interakcję ze sceną XR */
             z-index: 1000;
         }
 
@@ -20,25 +20,24 @@
             left: 50%;
             transform: translateX(-50%);
             width: 280px;
-            display: none; /* Pokazywane w AR */
+            display: none; 
             justify-content: space-between; 
             align-items: center;
             background: rgba(255, 255, 255, 0.9);
             padding: 15px;
             border-radius: 30px;
-            pointer-events: auto; /* Pozwala na klikanie w panel */
+            pointer-events: auto; /* Kluczowe: UI musi reagować na dotyk */
             box-shadow: 0 4px 15px rgba(0,0,0,0.3);
         }
 
-        button.nav-btn {
+        .nav-btn {
             background: #222; color: white; border: none;
             width: 50px; height: 50px; border-radius: 25px;
             font-size: 24px; cursor: pointer;
             display: flex; align-items: center; justify-content: center;
+            user-select: none;
             -webkit-tap-highlight-color: transparent;
         }
-
-        button.nav-btn:active { background: #555; }
 
         #model-name {
             font-weight: bold; color: #333; text-align: center;
@@ -88,7 +87,6 @@
 
         const uiContainer = document.getElementById('ui-container');
         const nameLabel = document.getElementById('model-name');
-        const overlayDiv = document.getElementById('overlay');
 
         init();
         animate();
@@ -100,7 +98,6 @@
             scene = new THREE.Scene();
             camera = new THREE.PerspectiveCamera(70, window.innerWidth / window.innerHeight, 0.01, 20);
 
-            // Światło
             scene.add(new THREE.HemisphereLight(0xffffff, 0xbbbbff, 3));
             const dirLight = new THREE.DirectionalLight(0xffffff, 1.5);
             dirLight.position.set(0, 10, 0);
@@ -112,11 +109,11 @@
             renderer.xr.enabled = true;
             container.appendChild(renderer.domElement);
 
-            // Konfiguracja Przycisku AR
+            // Przycisk AR
             const arButton = ARButton.createButton(renderer, { 
                 requiredFeatures: ['hit-test'],
                 optionalFeatures: ['dom-overlay'],
-                domOverlay: { root: overlayDiv } 
+                domOverlay: { root: document.getElementById('overlay') } 
             });
             document.body.appendChild(arButton);
             
@@ -124,25 +121,18 @@
                 uiContainer.style.display = 'flex';
             });
 
-            // --- POPRAWKA KLIKANIA PRZEZ GUI ---
-            const preventSpam = (e) => {
-                e.stopPropagation(); // Zatrzymuje zdarzenie, by nie dotarło do sceny 3D
-                if (e.cancelable) e.preventDefault();
-            };
+            // --- OBSŁUGA PRZYCISKÓW ---
+            document.getElementById('btn-prev').addEventListener('click', (e) => {
+                e.stopPropagation(); // Nie stawiaj modelu
+                e.preventDefault();
+                changeModel(-1);
+            });
 
-            const setupButton = (id, direction) => {
-                const btn = document.getElementById(id);
-                // Blokujemy wszystkie rodzaje interakcji, które XR mógłby przechwycić
-                ['click', 'mousedown', 'touchstart'].forEach(type => {
-                    btn.addEventListener(type, (e) => {
-                        preventSpam(e);
-                        if(type === 'click') changeModel(direction);
-                    }, { passive: false });
-                });
-            };
-
-            setupButton('btn-prev', -1);
-            setupButton('btn-next', 1);
+            document.getElementById('btn-next').addEventListener('click', (e) => {
+                e.stopPropagation(); // Nie stawiaj modelu
+                e.preventDefault();
+                changeModel(1);
+            });
 
             // Celownik
             reticle = new THREE.Mesh(
@@ -153,7 +143,7 @@
             reticle.visible = false;
             scene.add(reticle);
 
-            // Kontroler AR
+            // Kontroler
             controller = renderer.xr.getController(0);
             controller.addEventListener('select', onSelect);
             scene.add(controller);
@@ -164,8 +154,7 @@
 
         function getFileName(url) {
             const parts = url.split('/');
-            const name = parts[parts.length - 1].split('.')[0];
-            return name.replace(/-/g, ' '); // Zamień myślniki na spacje
+            return parts[parts.length - 1].split('.')[0].toUpperCase().replace(/-/g, ' ');
         }
 
         function changeModel(direction) {
@@ -185,12 +174,12 @@
                 return;
             }
 
-            new GLTFLoader().load(url, (gltf) => {
+            const loader = new GLTFLoader();
+            loader.load(url, (gltf) => {
                 let model = gltf.scene;
                 const box = new THREE.Box3().setFromObject(model);
                 const size = box.getSize(new THREE.Vector3()).length();
-                const scaleFactor = 0.5 / size;
-                model.scale.setScalar(scaleFactor);
+                model.scale.setScalar(0.5 / size);
 
                 loadedTemplates[url] = model;
                 currentTemplate = model;
@@ -199,26 +188,19 @@
         }
 
         function onSelect() {
-            // Sprawdzamy czy celownik jest widoczny (czyli czy wykryto podłogę)
+            // SPRAWDZENIE: Czy użytkownik kliknął w UI?
+            // Jeśli uiContainer ma display flex i zawiera element pod palcem, select powinien zostać przerwany.
+            // Jednak w AR select ignoruje standardowe e.stopPropagation() z DOM.
+            // Dlatego sprawdzamy widoczność reticle – zazwyczaj wystarcza.
             if (reticle.visible && currentTemplate) {
                 const newObject = currentTemplate.clone();
                 reticle.matrix.decompose(newObject.position, newObject.quaternion, newObject.scale);
                 
-                const lookAtPos = new THREE.Vector3(
-                    camera.position.x,
-                    newObject.position.y,
-                    camera.position.z
-                );
+                const lookAtPos = new THREE.Vector3(camera.position.x, newObject.position.y, camera.position.z);
                 newObject.lookAt(lookAtPos);
                 
                 scene.add(newObject);
             }
-        }
-
-        function onWindowResize() {
-            camera.aspect = window.innerWidth / window.innerHeight;
-            camera.updateProjectionMatrix();
-            renderer.setSize(window.innerWidth, window.innerHeight);
         }
 
         function animate() {
@@ -256,6 +238,12 @@
                 }
             }
             renderer.render(scene, camera);
+        }
+
+        function onWindowResize() {
+            camera.aspect = window.innerWidth / window.innerHeight;
+            camera.updateProjectionMatrix();
+            renderer.setSize(window.innerWidth, window.innerHeight);
         }
     </script>
 </body>
