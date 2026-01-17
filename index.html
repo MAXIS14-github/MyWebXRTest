@@ -2,12 +2,11 @@
 <html lang="pl">
 <head>
     <meta charset="utf-8">
-    <title>WebXR Wybór Modeli</title>
+    <title>WebXR Modele Patrzą na Ciebie</title>
     <meta name="viewport" content="width=device-width, initial-scale=1.0, user-scalable=no">
     <style>
         body { margin: 0; overflow: hidden; background-color: #000; font-family: sans-serif; }
         
-        /* Styl panelu sterowania */
         #ui-container {
             position: absolute; 
             bottom: 30px; 
@@ -20,8 +19,8 @@
             background: rgba(255, 255, 255, 0.8);
             padding: 10px;
             border-radius: 20px;
-            z-index: 100; /* Musi być na wierzchu */
-            display: none; /* Ukryty dopóki AR nie ruszy */
+            z-index: 100;
+            display: none;
         }
 
         button.nav-btn {
@@ -52,7 +51,7 @@
     </script>
 </head>
 <body>
-    <div id="info">Wybierz model na dole i dotknij ekranu, aby postawić.</div>
+    <div id="info">Modele będą obrócone twarzą do Ciebie.</div>
 
     <div id="ui-container">
         <button class="nav-btn" id="btn-prev">&lt;</button>
@@ -65,26 +64,22 @@
         import { ARButton } from 'three/addons/webxr/ARButton.js';
         import { GLTFLoader } from 'three/addons/loaders/GLTFLoader.js';
 
-        // ==========================================
-        // 1. LISTA MODELI DO POSTAWIENIA
-        // ==========================================
+        // Lista modeli
         const MODELS = [
             "https://immersive-web.github.io/webxr-samples/media/gltf/sunflower/sunflower.gltf",
             "https://immersive-web.github.io/webxr-samples/media/gltf/space-shuttle.gltf",
-            // Ten model jest trochę większy (fotel):
             "https://raw.githubusercontent.com/KhronosGroup/glTF-Sample-Models/master/2.0/SheenChair/glTF/SheenChair.gltf" 
         ];
 
         let currentModelIndex = 0;
-        let loadedTemplates = {}; // Cache dla załadowanych modeli
-        let currentTemplate = null; // Aktualnie wybrany model gotowy do klonowania
+        let loadedTemplates = {};
+        let currentTemplate = null;
 
         let camera, scene, renderer;
         let controller, reticle;
         let hitTestSource = null;
         let hitTestSourceRequested = false;
 
-        // Elementy UI
         const uiContainer = document.getElementById('ui-container');
         const nameLabel = document.getElementById('model-name');
         const btnPrev = document.getElementById('btn-prev');
@@ -98,15 +93,14 @@
             document.body.appendChild(container);
 
             scene = new THREE.Scene();
-            scene.background = null; // Przezroczystość dla kamery
+            scene.background = null;
 
             camera = new THREE.PerspectiveCamera(70, window.innerWidth / window.innerHeight, 0.01, 20);
 
-            // Oświetlenie (ważne dla modeli 3D)
             const light = new THREE.HemisphereLight(0xffffff, 0xbbbbff, 3);
             light.position.set(0.5, 1, 0.25);
             scene.add(light);
-            const dirLight = new THREE.DirectionalLight(0xffffff, 1.5); // Dodatkowe światło kierunkowe
+            const dirLight = new THREE.DirectionalLight(0xffffff, 1.5);
             dirLight.position.set(0, 10, 0);
             scene.add(dirLight);
 
@@ -117,22 +111,16 @@
             renderer.xr.enabled = true;
             container.appendChild(renderer.domElement);
 
-            // ==========================================
-            // KONFIGURACJA AR BUTTON Z DOM OVERLAY
-            // ==========================================
-            // Pozwala widzieć HTML (uiContainer) na wierzchu kamery
             const arButton = ARButton.createButton(renderer, { 
                 requiredFeatures: ['hit-test'],
                 optionalFeatures: ['dom-overlay'],
                 domOverlay: { root: document.body } 
             });
             arButton.addEventListener('click', () => {
-                // Pokaż panel sterowania po wejściu w AR
                 uiContainer.style.display = 'flex';
             });
             document.body.appendChild(arButton);
 
-            // Celownik (Reticle)
             reticle = new THREE.Mesh(
                 new THREE.RingGeometry(0.15, 0.2, 32).rotateX(-Math.PI / 2),
                 new THREE.MeshBasicMaterial({ color: 0xffffff })
@@ -141,45 +129,26 @@
             reticle.visible = false;
             scene.add(reticle);
 
-            // Kontroler dotyku
             controller = renderer.xr.getController(0);
             controller.addEventListener('select', onSelect);
             scene.add(controller);
 
-            // Obsługa przycisków UI
-            btnPrev.addEventListener('click', (e) => { 
-                e.stopPropagation(); // Zapobiegaj stawianiu modelu przy kliknięciu przycisku
-                changeModel(-1); 
-            });
-            btnNext.addEventListener('click', (e) => { 
-                e.stopPropagation(); 
-                changeModel(1); 
-            });
+            btnPrev.addEventListener('click', (e) => { e.stopPropagation(); changeModel(-1); });
+            btnNext.addEventListener('click', (e) => { e.stopPropagation(); changeModel(1); });
 
-            // Załaduj pierwszy model na start
             loadModel(0);
-
             window.addEventListener('resize', onWindowResize);
         }
 
-        // ==========================================
-        // LOGIKA ZMIANY I ŁADOWANIA MODELI
-        // ==========================================
-        
         function getFileName(url) {
-            // Wyciąga nazwę z URL: "folder/kwiatek.gltf" -> "kwiatek"
             const parts = url.split('/');
-            const fileWithExt = parts[parts.length - 1];
-            return fileWithExt.split('.')[0].toUpperCase(); // Usuwa rozszerzenie i powiększa
+            return parts[parts.length - 1].split('.')[0].toUpperCase();
         }
 
         function changeModel(direction) {
             currentModelIndex += direction;
-            
-            // Pętla (jeśli koniec, wróć do początku)
             if (currentModelIndex < 0) currentModelIndex = MODELS.length - 1;
             if (currentModelIndex >= MODELS.length) currentModelIndex = 0;
-
             loadModel(currentModelIndex);
         }
 
@@ -188,93 +157,7 @@
             const name = getFileName(url);
             nameLabel.innerText = "Ładowanie...";
 
-            // Sprawdź czy już załadowaliśmy ten model wcześniej (cache)
             if (loadedTemplates[url]) {
                 currentTemplate = loadedTemplates[url];
                 nameLabel.innerText = name;
                 return;
-            }
-
-            // Jeśli nie, pobierz z sieci
-            const loader = new GLTFLoader();
-            loader.load(
-                url, 
-                (gltf) => {
-                    let model = gltf.scene;
-                    
-                    // Normalizacja skali (niektóre modele są gigantyczne)
-                    // Dla uproszczenia, skalujemy wszystko do sensownych rozmiarów AR
-                    const box = new THREE.Box3().setFromObject(model);
-                    const size = box.getSize(new THREE.Vector3()).length();
-                    const scaleFactor = 0.5 / size; // Celujemy w ~50cm wielkości
-                    model.scale.setScalar(scaleFactor);
-
-                    loadedTemplates[url] = model;
-                    currentTemplate = model;
-                    nameLabel.innerText = name;
-                },
-                undefined,
-                (err) => {
-                    console.error(err);
-                    nameLabel.innerText = "Błąd!";
-                }
-            );
-        }
-
-        function onSelect() {
-            if (reticle.visible && currentTemplate) {
-                const newObject = currentTemplate.clone();
-                reticle.matrix.decompose(newObject.position, newObject.quaternion, newObject.scale);
-                
-                // Zachowaj skalę modelu bazowego, ale pozwól na rotację
-                newObject.rotation.y = Math.random() * Math.PI * 2;
-                
-                scene.add(newObject);
-            }
-        }
-
-        function onWindowResize() {
-            camera.aspect = window.innerWidth / window.innerHeight;
-            camera.updateProjectionMatrix();
-            renderer.setSize(window.innerWidth, window.innerHeight);
-        }
-
-        function animate() {
-            renderer.setAnimationLoop(render);
-        }
-
-        function render(timestamp, frame) {
-            if (frame) {
-                const referenceSpace = renderer.xr.getReferenceSpace();
-                const session = renderer.xr.getSession();
-
-                if (!hitTestSourceRequested) {
-                    session.requestReferenceSpace('viewer').then((refSpace) => {
-                        session.requestHitTestSource({ space: refSpace }).then((source) => {
-                            hitTestSource = source;
-                        });
-                    });
-                    session.addEventListener('end', () => { 
-                        hitTestSourceRequested = false; 
-                        hitTestSource = null; 
-                        uiContainer.style.display = 'none'; // Ukryj UI po wyjściu z AR
-                    });
-                    hitTestSourceRequested = true;
-                }
-
-                if (hitTestSource) {
-                    const hitTestResults = frame.getHitTestResults(hitTestSource);
-                    if (hitTestResults.length > 0) {
-                        const hit = hitTestResults[0];
-                        reticle.visible = true;
-                        reticle.matrix.fromArray(hit.getPose(referenceSpace).transform.matrix);
-                    } else {
-                        reticle.visible = false;
-                    }
-                }
-            }
-            renderer.render(scene, camera);
-        }
-    </script>
-</body>
-</html>
