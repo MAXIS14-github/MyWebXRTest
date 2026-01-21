@@ -2,47 +2,42 @@
 <html lang="pl">
 <head>
     <meta charset="utf-8">
-    <title>WebXR AR - Fix Controls</title>
+    <title>WebXR Modele Patrzą na Ciebie</title>
     <meta name="viewport" content="width=device-width, initial-scale=1.0, user-scalable=no">
     <style>
         body { margin: 0; overflow: hidden; background-color: #000; font-family: sans-serif; }
         
-        #overlay {
-            position: absolute;
-            top: 0; left: 0; width: 100%; height: 100%;
-            pointer-events: none; /* Pozwala na interakcję ze sceną XR */
-            z-index: 1000;
-        }
-
         #ui-container {
-            position: absolute;
-            bottom: 50px;
-            left: 50%;
-            transform: translateX(-50%);
-            width: 280px;
-            display: none; 
+            position: absolute; 
+            bottom: 30px; 
+            left: 50%; 
+            transform: translateX(-50%); 
+            width: 300px;
+            display: flex; 
             justify-content: space-between; 
             align-items: center;
-            background: rgba(255, 255, 255, 0.9);
-            padding: 15px;
-            border-radius: 30px;
-            pointer-events: auto; /* Kluczowe: UI musi reagować na dotyk */
-            box-shadow: 0 4px 15px rgba(0,0,0,0.3);
+            background: rgba(255, 255, 255, 0.8);
+            padding: 10px;
+            border-radius: 20px;
+            z-index: 100;
+            display: none;
         }
 
-        .nav-btn {
-            background: #222; color: white; border: none;
-            width: 50px; height: 50px; border-radius: 25px;
-            font-size: 24px; cursor: pointer;
-            display: flex; align-items: center; justify-content: center;
-            user-select: none;
-            -webkit-tap-highlight-color: transparent;
+        button.nav-btn {
+            background: #333; color: white; border: none;
+            width: 40px; height: 40px; border-radius: 50%;
+            font-size: 20px; cursor: pointer;
         }
 
         #model-name {
             font-weight: bold; color: #333; text-align: center;
-            font-size: 14px; text-transform: uppercase;
             flex-grow: 1; margin: 0 10px;
+        }
+
+        #info {
+            position: absolute; top: 10px; width: 100%; text-align: center;
+            color: white; text-shadow: 1px 1px 2px black; pointer-events: none;
+            z-index: 10;
         }
     </style>
     
@@ -56,13 +51,12 @@
     </script>
 </head>
 <body>
-    
-    <div id="overlay">
-        <div id="ui-container">
-            <button class="nav-btn" id="btn-prev">←</button>
-            <span id="model-name">ŁADOWANIE...</span>
-            <button class="nav-btn" id="btn-next">→</button>
-        </div>
+    <div id="info">Modele będą obrócone twarzą do Ciebie.</div>
+
+    <div id="ui-container">
+        <button class="nav-btn" id="btn-prev">&lt;</button>
+        <span id="model-name">Ładowanie...</span>
+        <button class="nav-btn" id="btn-next">&gt;</button>
     </div>
 
     <script type="module">
@@ -70,6 +64,7 @@
         import { ARButton } from 'three/addons/webxr/ARButton.js';
         import { GLTFLoader } from 'three/addons/loaders/GLTFLoader.js';
 
+        // Lista modeli
         const MODELS = [
             "https://immersive-web.github.io/webxr-samples/media/gltf/sunflower/sunflower.gltf",
             "https://immersive-web.github.io/webxr-samples/media/gltf/space-shuttle.gltf",
@@ -87,6 +82,8 @@
 
         const uiContainer = document.getElementById('ui-container');
         const nameLabel = document.getElementById('model-name');
+        const btnPrev = document.getElementById('btn-prev');
+        const btnNext = document.getElementById('btn-next');
 
         init();
         animate();
@@ -96,9 +93,13 @@
             document.body.appendChild(container);
 
             scene = new THREE.Scene();
+            scene.background = null;
+
             camera = new THREE.PerspectiveCamera(70, window.innerWidth / window.innerHeight, 0.01, 20);
 
-            scene.add(new THREE.HemisphereLight(0xffffff, 0xbbbbff, 3));
+            const light = new THREE.HemisphereLight(0xffffff, 0xbbbbff, 3);
+            light.position.set(0.5, 1, 0.25);
+            scene.add(light);
             const dirLight = new THREE.DirectionalLight(0xffffff, 1.5);
             dirLight.position.set(0, 10, 0);
             scene.add(dirLight);
@@ -106,35 +107,20 @@
             renderer = new THREE.WebGLRenderer({ antialias: true, alpha: true });
             renderer.setPixelRatio(window.devicePixelRatio);
             renderer.setSize(window.innerWidth, window.innerHeight);
+            renderer.setClearColor(0x000000, 0); 
             renderer.xr.enabled = true;
             container.appendChild(renderer.domElement);
 
-            // Przycisk AR
             const arButton = ARButton.createButton(renderer, { 
                 requiredFeatures: ['hit-test'],
                 optionalFeatures: ['dom-overlay'],
-                domOverlay: { root: document.getElementById('overlay') } 
+                domOverlay: { root: document.body } 
             });
-            document.body.appendChild(arButton);
-            
             arButton.addEventListener('click', () => {
                 uiContainer.style.display = 'flex';
             });
+            document.body.appendChild(arButton);
 
-            // --- OBSŁUGA PRZYCISKÓW ---
-            document.getElementById('btn-prev').addEventListener('click', (e) => {
-                e.stopPropagation(); // Nie stawiaj modelu
-                e.preventDefault();
-                changeModel(-1);
-            });
-
-            document.getElementById('btn-next').addEventListener('click', (e) => {
-                e.stopPropagation(); // Nie stawiaj modelu
-                e.preventDefault();
-                changeModel(1);
-            });
-
-            // Celownik
             reticle = new THREE.Mesh(
                 new THREE.RingGeometry(0.15, 0.2, 32).rotateX(-Math.PI / 2),
                 new THREE.MeshBasicMaterial({ color: 0xffffff })
@@ -143,10 +129,12 @@
             reticle.visible = false;
             scene.add(reticle);
 
-            // Kontroler
             controller = renderer.xr.getController(0);
             controller.addEventListener('select', onSelect);
             scene.add(controller);
+
+            btnPrev.addEventListener('click', (e) => { e.stopPropagation(); changeModel(-1); });
+            btnNext.addEventListener('click', (e) => { e.stopPropagation(); changeModel(1); });
 
             loadModel(0);
             window.addEventListener('resize', onWindowResize);
@@ -154,7 +142,7 @@
 
         function getFileName(url) {
             const parts = url.split('/');
-            return parts[parts.length - 1].split('.')[0].toUpperCase().replace(/-/g, ' ');
+            return parts[parts.length - 1].split('.')[0].toUpperCase();
         }
 
         function changeModel(direction) {
@@ -166,11 +154,12 @@
 
         function loadModel(index) {
             const url = MODELS[index];
-            nameLabel.innerText = "ŁADOWANIE...";
+            const name = getFileName(url);
+            nameLabel.innerText = "Ładowanie...";
 
             if (loadedTemplates[url]) {
                 currentTemplate = loadedTemplates[url];
-                nameLabel.innerText = getFileName(url);
+                nameLabel.innerText = name;
                 return;
             }
 
@@ -179,28 +168,43 @@
                 let model = gltf.scene;
                 const box = new THREE.Box3().setFromObject(model);
                 const size = box.getSize(new THREE.Vector3()).length();
-                model.scale.setScalar(0.5 / size);
+                const scaleFactor = 0.5 / size;
+                model.scale.setScalar(scaleFactor);
 
                 loadedTemplates[url] = model;
                 currentTemplate = model;
-                nameLabel.innerText = getFileName(url);
+                nameLabel.innerText = name;
             });
         }
 
+        // --- GŁÓWNA ZMIANA TUTAJ ---
         function onSelect() {
-            // SPRAWDZENIE: Czy użytkownik kliknął w UI?
-            // Jeśli uiContainer ma display flex i zawiera element pod palcem, select powinien zostać przerwany.
-            // Jednak w AR select ignoruje standardowe e.stopPropagation() z DOM.
-            // Dlatego sprawdzamy widoczność reticle – zazwyczaj wystarcza.
             if (reticle.visible && currentTemplate) {
                 const newObject = currentTemplate.clone();
+                
+                // 1. Pobierz pozycję z celownika
                 reticle.matrix.decompose(newObject.position, newObject.quaternion, newObject.scale);
                 
-                const lookAtPos = new THREE.Vector3(camera.position.x, newObject.position.y, camera.position.z);
+                // 2. Oblicz punkt, na który obiekt ma patrzeć.
+                // Używamy pozycji kamery (X i Z), ale zachowujemy wysokość obiektu (Y).
+                // Dzięki temu obiekt obraca się tylko "na boki", a nie pochyla do góry/w dół.
+                const lookAtPos = new THREE.Vector3(
+                    camera.position.x,
+                    newObject.position.y,
+                    camera.position.z
+                );
+
+                // 3. Wykonaj obrót
                 newObject.lookAt(lookAtPos);
                 
                 scene.add(newObject);
             }
+        }
+
+        function onWindowResize() {
+            camera.aspect = window.innerWidth / window.innerHeight;
+            camera.updateProjectionMatrix();
+            renderer.setSize(window.innerWidth, window.innerHeight);
         }
 
         function animate() {
@@ -238,12 +242,6 @@
                 }
             }
             renderer.render(scene, camera);
-        }
-
-        function onWindowResize() {
-            camera.aspect = window.innerWidth / window.innerHeight;
-            camera.updateProjectionMatrix();
-            renderer.setSize(window.innerWidth, window.innerHeight);
         }
     </script>
 </body>
